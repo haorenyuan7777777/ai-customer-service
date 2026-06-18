@@ -1,0 +1,81 @@
+$schema: https://azuremlschemas.azureedge.net/promptflow/latest/Flow.schema.json
+
+environment:
+  python_requirements_txt: requirements.txt
+
+inputs:
+  query:
+    type: string
+    default: "铅酸蓄电池正确使用的注意事项有哪些？"
+    description: "用户输入的查询"
+  chat_history:
+    type: list
+    default: []
+    description: "多轮对话历史"
+  session_id:
+    type: string
+    default: "default"
+    description: "会话ID"
+
+outputs:
+  response:
+    type: string
+    reference: ${generate_response.output}
+    description: "最终回复"
+  intent:
+    type: string
+    reference: ${detect_intent.output.intent}
+    description: "识别到的意图"
+  sources:
+    type: list
+    reference: ${retrieve_knowledge.output}
+    description: "检索到的知识来源"
+
+nodes:
+- name: detect_intent
+  type: python
+  source:
+    type: code
+    path: nodes/detect_intent.py
+  inputs:
+    query: ${inputs.query}
+
+- name: load_memory
+  type: python
+  source:
+    type: code
+    path: nodes/load_memory.py
+  inputs:
+    session_id: ${inputs.session_id}
+    limit: 3
+
+- name: retrieve_knowledge
+  type: python
+  source:
+    type: code
+    path: nodes/retrieve_knowledge.py
+  inputs:
+    query: ${inputs.query}
+    intent: ${detect_intent.output.intent}
+    top_k: 5
+
+- name: build_prompt
+  type: prompt
+  source:
+    type: code
+    path: templates/customer_service.jinja2
+  inputs:
+    query: ${inputs.query}
+    context: ${retrieve_knowledge.output}
+    intent: ${detect_intent.output.intent}
+    history: ${load_memory.output}
+
+- name: generate_response
+  type: python
+  source:
+    type: code
+    path: nodes/generate_response.py
+  inputs:
+    prompt: ${build_prompt.output}
+    max_tokens: 1024
+    temperature: 0.7

@@ -33,7 +33,7 @@ HARDWARE = {
 # ========== 模型配置 ==========
 MODELS = {
     "llm": {
-        "name": "Qwen2.5-1.5B-Instruct",
+        "name": "Qwen2.5-1.5B",
         "url": "http://localhost:8000/v1",
         "api_key": "not-needed",
         "max_tokens": 1024,
@@ -100,4 +100,13 @@ DATA_SPLIT = {
     "train_ratio": 0.8,
     "test_ratio": 0.2,
     "random_seed": 42,
+}
+
+# ========== 数据路径配置 ==========
+PROJECT_ROOT = Path(__file__).parent.parent
+DATA_PATHS = {
+    "raw": str(PROJECT_ROOT / "data" / "raw" / "knowledge.json"),
+    "train": str(PROJECT_ROOT / "data" / "train_test_split" / "train.json"),
+    "test": str(PROJECT_ROOT / "data" / "train_test_split" / "test.json"),
+    "processed": str(PROJECT_ROOT / "data" / "processed"),
 }
