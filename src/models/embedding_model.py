@@ -1,0 +1,1 @@
+# BGE-small-zh GPU封装
