@@ -1,0 +1,31 @@
+# configs/milvus.yaml
+# Milvus Standalone 配置（对接 docker-compose.milvus.yml）
+
+connection:
+  host: "localhost"
+  port: "19530"
+  alias: "default"
+
+collection:
+  name: "knowledge_base"
+  dim: 512                    # BGE-small-zh 输出维度
+  shard_num: 1              # 单机场景，1个分片足够
+  
+index:
+  type: "HNSW"
+  metric_type: "COSINE"
+  params:
+    M: 16                   # 每个节点最大连接数（内存充裕，增大提升精度）
+    efConstruction: 200     # 构建搜索范围（越大精度越高，构建越慢）
+    ef: 128                 # 查询搜索范围（越大精度越高，查询越慢）
+
+# 检索配置
+search:
+  top_k: 5                  # 默认检索数量
+  similarity_cutoff: 0.7    # 相似度阈值（COSINE，≥0.7视为相关）
+  rerank_top_n: 3           # 重排序后保留数量
+
+# 分区配置（阶段5后启用）
+partition:
+  enabled: false            # 当前阶段关闭，阶段5按意图分类开启
+  fields: ["售前咨询", "成交转化", "售后支持", "投诉建议"]

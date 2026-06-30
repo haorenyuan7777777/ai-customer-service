@@ -1,0 +1,13 @@
+embedding:
+  batch_size: 64
+llm:
+  max_tokens: 981
+  temperature: 0.7
+  top_p: 0.9
+rag:
+  rerank_top_n: 3
+  similarity_cutoff: 0.3
+  top_k: 5
+timestamp: '2026-06-20 20:20:20'
+validation:
+  estimated_top3_accuracy: 1.0

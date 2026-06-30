@@ -117,3 +117,8 @@ class IntentClassifier:
 
 # 全局实例
 intent_classifier = IntentClassifier()
+
+
+def get_intent_model():
+    """获取意图识别模型单例（兼容PromptFlowEngine调用）"""
+    return intent_classifier

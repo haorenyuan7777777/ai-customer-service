@@ -110,3 +110,17 @@ DATA_PATHS = {
     "test": str(PROJECT_ROOT / "data" / "train_test_split" / "test.json"),
     "processed": str(PROJECT_ROOT / "data" / "processed"),
 }
+
+def get_config():
+    """获取全局配置（兼容PromptFlow节点调用）"""
+    return {
+        "hardware": HARDWARE,
+        "models": MODELS,
+        "milvus": MILVUS,
+        "intent_labels": INTENT_LABELS,
+        "database": DATABASE,
+        "promptflow": PROMPTFLOW,
+        "api": API,
+        "data_split": DATA_SPLIT,
+        "data_paths": DATA_PATHS,
+    }

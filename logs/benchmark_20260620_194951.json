@@ -1,0 +1,30 @@
+{
+  "timestamp": "2026-06-20 19:49:51",
+  "config": {
+    "concurrent_users": 3,
+    "total_requests": 30,
+    "ramp_up_sec": 5.0
+  },
+  "results": {
+    "total_time_sec": 22.63,
+    "successful": 30,
+    "failed": 0,
+    "success_rate": 1.0,
+    "throughput_rps": 1.33,
+    "latency": {
+      "min_ms": 0.41,
+      "p50_ms": 1827.57,
+      "p95_ms": 4203.49,
+      "p99_ms": 4381.81,
+      "max_ms": 4381.81,
+      "mean_ms": 1782.16
+    }
+  },
+  "resource_peak": {
+    "cpu_percent": 14.3,
+    "memory_percent": 62.5,
+    "gpu_gb": 0.81
+  },
+  "errors": [],
+  "status": "✅ PASS"
+}

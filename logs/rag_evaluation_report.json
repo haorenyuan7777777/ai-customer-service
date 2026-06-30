@@ -1,0 +1,235 @@
+{
+  "report_type": "comprehensive_evaluation",
+  "timestamp": "2026-06-20 19:49:51",
+  "system_info": {
+    "stage": "7/8",
+    "modules_evaluated": [
+      "RAG",
+      "Agent",
+      "Benchmark"
+    ]
+  },
+  "rag_evaluation": {
+    "top_k_accuracy": {
+      "top_1_accuracy": {
+        "k": 1,
+        "sample_size": 500,
+        "correct": 2,
+        "accuracy": 0.004,
+        "threshold": "≥50%",
+        "status": "⚠️ NEED IMPROVE"
+      },
+      "top_3_accuracy": {
+        "k": 3,
+        "sample_size": 500,
+        "correct": 2,
+        "accuracy": 0.004,
+        "threshold": "≥60%",
+        "status": "⚠️ NEED IMPROVE"
+      },
+      "top_5_accuracy": {
+        "k": 5,
+        "sample_size": 500,
+        "correct": 2,
+        "accuracy": 0.004,
+        "threshold": "≥70%",
+        "status": "⚠️ NEED IMPROVE"
+      }
+    },
+    "latency": {
+      "sample_size": 200,
+      "p50_ms": 8.17,
+      "p95_ms": 11.54,
+      "p99_ms": 21.23,
+      "mean_ms": 8.78,
+      "min_ms": 7.45,
+      "max_ms": 23.87,
+      "threshold_p95": "<500ms",
+      "status": "✅ PASS"
+    },
+    "gpu_stability": {
+      "duration_sec": 60,
+      "queries_executed": 300,
+      "errors": 0,
+      "actual_qps": 5.0,
+      "initial_gb": 0.12,
+      "peak_gb": 0.12,
+      "growth_gb": 0.0,
+      "threshold_growth": "<0.5GB",
+      "status": "✅ PASS"
+    },
+    "throughput": {
+      "batch_1": {
+        "batch_size": 1,
+        "total_time_ms": 13.36,
+        "throughput_qps": 74.85,
+        "avg_latency_ms": 13.36
+      },
+      "batch_10": {
+        "batch_size": 10,
+        "total_time_ms": 62.02,
+        "throughput_qps": 161.23,
+        "avg_latency_ms": 6.2
+      },
+      "batch_50": {
+        "batch_size": 50,
+        "total_time_ms": 223.35,
+        "throughput_qps": 223.87,
+        "avg_latency_ms": 4.47
+      },
+      "batch_100": {
+        "batch_size": 100,
+        "total_time_ms": 414.36,
+        "throughput_qps": 241.34,
+        "avg_latency_ms": 4.14
+      }
+    }
+  },
+  "agent_evaluation": {
+    "keyword_intent": {
+      "test_type": "keyword_intent",
+      "total_cases": 12,
+      "correct": 9,
+      "accuracy": 0.75,
+      "details": [
+        {
+          "input": "这个电池多少钱？",
+          "expected": "销售转化",
+          "actual": "销售转化",
+          "correct": true,
+          "source": "keyword"
+        },
+        {
+          "input": "有优惠活动吗？想批量购买",
+          "expected": "销售转化",
+          "actual": "销售转化",
+          "correct": true,
+          "source": "keyword"
+        },
+        {
+          "input": "怎么下单？可以开发票吗？",
+          "expected": "销售转化",
+          "actual": "销售转化",
+          "correct": true,
+          "source": "keyword"
+        },
+        {
+          "input": "电池充不进去电怎么办？",
+          "expected": "技术支持",
+          "actual": "技术支持",
+          "correct": true,
+          "source": "keyword"
+        },
+        {
+          "input": "产品坏了，怎么修？",
+          "expected": "技术支持",
+          "actual": "技术支持",
+          "correct": true,
+          "source": "keyword"
+        },
+        {
+          "input": "安装步骤是什么？",
+          "expected": "技术支持",
+          "actual": "技术支持",
+          "correct": true,
+          "source": "keyword"
+        },
+        {
+          "input": "你们这是骗人的，我要投诉！",
+          "expected": "投诉处理",
+          "actual": "投诉处理",
+          "correct": true,
+          "source": "keyword"
+        },
+        {
+          "input": "产品质量太差，要求退款赔偿",
+          "expected": "投诉处理",
+          "actual": "投诉处理",
+          "correct": true,
+          "source": "keyword"
+        },
+        {
+          "input": "我要差评，虚假宣传",
+          "expected": "投诉处理",
+          "actual": "投诉处理",
+          "correct": true,
+          "source": "keyword"
+        },
+        {
+          "input": "铅酸蓄电池正确使用的注意事项有哪些？",
+          "expected": "标准客服",
+          "actual": "技术支持",
+          "correct": false,
+          "source": "keyword"
+        },
+        {
+          "input": "你们公司在哪里？",
+          "expected": "标准客服",
+          "actual": "投诉处理",
+          "correct": false,
+          "source": "bert"
+        },
+        {
+          "input": "谢谢，再见",
+          "expected": "标准客服",
+          "actual": "投诉处理",
+          "correct": false,
+          "source": "bert"
+        }
+      ],
+      "threshold": "≥90%",
+      "status": "⚠️ NEED IMPROVE"
+    },
+    "end_to_end": {
+      "test_type": "end_to_end",
+      "sample_size": 50,
+      "p50_ms": 2.71,
+      "p95_ms": 2332.91,
+      "p99_ms": 4454.26,
+      "mean_ms": 396.35,
+      "intent_distribution": {
+        "销售转化": 20,
+        "技术支持": 20,
+        "投诉处理": 10
+      },
+      "threshold_p95": "<3000ms",
+      "status": "✅ PASS"
+    }
+  },
+  "benchmark": {
+    "timestamp": "2026-06-20 19:49:51",
+    "config": {
+      "concurrent_users": 3,
+      "total_requests": 30,
+      "ramp_up_sec": 5.0
+    },
+    "results": {
+      "total_time_sec": 22.63,
+      "successful": 30,
+      "failed": 0,
+      "success_rate": 1.0,
+      "throughput_rps": 1.33,
+      "latency": {
+        "min_ms": 0.41,
+        "p50_ms": 1827.57,
+        "p95_ms": 4203.49,
+        "p99_ms": 4381.81,
+        "max_ms": 4381.81,
+        "mean_ms": 1782.16
+      }
+    },
+    "resource_peak": {
+      "cpu_percent": 14.3,
+      "memory_percent": 62.5,
+      "gpu_gb": 0.81
+    },
+    "errors": [],
+    "status": "✅ PASS"
+  },
+  "summary": {
+    "rag_status": "⚠️ NEED IMPROVE",
+    "agent_status": "⚠️ NEED IMPROVE",
+    "benchmark_status": "✅ PASS",
+    "overall_status": "⚠️ NEED IMPROVE"
+  }
+}

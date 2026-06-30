@@ -1,36 +1,27 @@
 """
-Promptflow节点：加载对话记忆
-代理文件，调用 src.agent.memory
+记忆加载节点
+- 从SQLite加载多轮对话历史
+- 限制3轮（受2048上下文限制）
 """
+
+import os
 import sys
-from pathlib import Path
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
 
-project_root = Path(__file__).parent.parent.parent
-sys.path.insert(0, str(project_root))
-
-from src.agent.memory import ChatMemory
+from src.agent.memory import get_memory_store
 
 
-def load_memory(session_id: str, limit: int = 3) -> list:
+def run(user_id: str, session_id: str = "default", max_turns: int = 3) -> str:
     """
-    加载对话历史
-    
-    Args:
-        session_id: 会话ID
-        limit: 返回最近N条
+    加载用户历史记忆
     
     Returns:
-        对话历史列表
+        格式化记忆字符串
     """
-    memory = ChatMemory()
-    return memory.get_history(session_id, limit=limit)
-
-
-try:
-    from promptflow.core import tool
-    
-    @tool
-    def main(session_id: str, limit: int = 3) -> list:
-        return load_memory(session_id, limit)
-except ImportError:
-    pass
+    try:
+        memory_store = get_memory_store()
+        return memory_store.get_formatted_history(user_id, session_id, max_turns)
+    except Exception as e:
+        import logging
+        logging.getLogger(__name__).warning(f"加载记忆失败: {e}")
+        return ""

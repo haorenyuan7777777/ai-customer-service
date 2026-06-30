@@ -64,6 +64,10 @@ services:
       - ./volumes/milvus:/var/lib/milvus
     ports:
       - "19530:19530"
+      - "9091:9091"
+    mem_limit: 3G
+    memswap_limit: 3G  # 物理内存=总内存，禁用swap
+    mem_swappiness: 0
     deploy:
       resources:
         limits:
@@ -71,6 +75,16 @@ services:
     depends_on:
       - milvus-etcd
       - milvus-minio
+  
+  attu:
+    container_name: attu
+    image: zilliz/attu:v2.4
+    environment:
+      MILVUS_URL: milvus-standalone:19530
+    ports:
+      - "8001:3000"
+    depends_on:
+      - milvus-standalone
 
 networks:
   default:

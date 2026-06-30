@@ -1,81 +1,169 @@
-$schema: https://azuremlschemas.azureedge.net/promptflow/latest/Flow.schema.json
-
-environment:
-  python_requirements_txt: requirements.txt
+# flows/flow.dag.yaml
+# Promptflow DAG流程定义
 
 inputs:
-  query:
+  user_message:
     type: string
-    default: "铅酸蓄电池正确使用的注意事项有哪些？"
-    description: "用户输入的查询"
-  chat_history:
-    type: list
-    default: []
-    description: "多轮对话历史"
+    default: ""
+  user_id:
+    type: string
+    default: "anonymous"
   session_id:
     type: string
     default: "default"
-    description: "会话ID"
-
-outputs:
-  response:
-    type: string
-    reference: ${generate_response.output}
-    description: "最终回复"
-  intent:
-    type: string
-    reference: ${detect_intent.output.intent}
-    description: "识别到的意图"
-  sources:
-    type: list
-    reference: ${retrieve_knowledge.output}
-    description: "检索到的知识来源"
 
 nodes:
-- name: detect_intent
-  type: python
-  source:
-    type: code
-    path: nodes/detect_intent.py
-  inputs:
-    query: ${inputs.query}
+  - name: detect_intent
+    type: python
+    source:
+      type: code
+      path: nodes/detect_intent.py
+    inputs:
+      message: ${inputs.user_message}
 
-- name: load_memory
-  type: python
-  source:
-    type: code
-    path: nodes/load_memory.py
-  inputs:
-    session_id: ${inputs.session_id}
-    limit: 3
+  - name: load_memory
+    type: python
+    source:
+      type: code
+      path: nodes/load_memory.py
+    inputs:
+      user_id: ${inputs.user_id}
+      session_id: ${inputs.session_id}
+      max_turns: 3
 
-- name: retrieve_knowledge
-  type: python
-  source:
-    type: code
-    path: nodes/retrieve_knowledge.py
-  inputs:
-    query: ${inputs.query}
-    intent: ${detect_intent.output.intent}
-    top_k: 5
+  - name: retrieve_knowledge
+    type: python
+    source:
+      type: code
+      path: nodes/retrieve_knowledge.py
+    inputs:
+      query: ${inputs.user_message}
+      intent: ${detect_intent.intent}
+      category: ${detect_intent.category}
 
-- name: build_prompt
-  type: prompt
-  source:
-    type: code
-    path: templates/customer_service.jinja2
-  inputs:
-    query: ${inputs.query}
-    context: ${retrieve_knowledge.output}
-    intent: ${detect_intent.output.intent}
-    history: ${load_memory.output}
+  - name: assemble_prompt
+    type: python
+    source:
+      type: code
+      path: nodes/assemble_prompt.py
+    inputs:
+      user_message: ${inputs.user_message}
+      intent: ${detect_intent}          
+      memory: ${load_memory}             
+      context: ${retrieve_knowledge}     
 
-- name: generate_response
-  type: python
-  source:
-    type: code
-    path: nodes/generate_response.py
-  inputs:
-    prompt: ${build_prompt.output}
-    max_tokens: 1024
-    temperature: 0.7
+  - name: generate_response
+    type: llm
+    source:
+      type: code
+      path: nodes/generate_response.py
+    inputs:
+      prompt: ${assemble_prompt}        
+      max_tokens: 512
+
+  - name: save_memory
+    type: python
+    source:
+      type: code
+      path: nodes/save_memory.py
+    inputs:
+      user_id: ${inputs.user_id}
+      session_id: ${inputs.session_id}
+      user_message: ${inputs.user_message}
+      assistant_message: ${generate_response}  
+
+outputs:
+  response: ${generate_response}           
+  intent: ${detect_intent.intent}         
+  category: ${detect_intent.category}     
+  context_used: ${retrieve_knowledge}     
+
+
+
+# flows/flow.dag.yaml
+# Promptflow DAG流程定义
+# 节点连接关系：输入 → 意图检测 → 记忆加载 → 知识检索 → 响应生成 → 输出
+
+# $schema: https://azuremlschemas.azureedge.net/promptflow/latest/Flow.schema.json
+
+# environment:
+#   python_requirements_txt: requirements.txt
+
+# inputs:
+#   query:
+#     type: string
+#     default: "铅酸蓄电池正确使用的注意事项有哪些？"
+#     description: "用户输入的查询"
+#   chat_history:
+#     type: list
+#     default: []
+#     description: "多轮对话历史"
+#   session_id:
+#     type: string
+#     default: "default"
+#     description: "会话ID"
+
+# outputs:
+#   response:
+#     type: string
+#     reference: ${generate_response.output}
+#     description: "最终回复"
+#   intent:
+#     type: string
+#     reference: ${detect_intent.output.intent}
+#     description: "识别到的意图"
+#   sources:
+#     type: list
+#     reference: ${retrieve_knowledge.output}
+#     description: "检索到的知识来源"
+
+# nodes:
+# - name: detect_intent
+#   type: python
+#   source:
+#     type: code
+#     path: nodes/detect_intent.py
+#   inputs:
+#     query: ${inputs.query}
+
+# - name: load_memory
+#   type: python
+#   source:
+#     type: code
+#     path: nodes/load_memory.py
+#   inputs:
+#     session_id: ${inputs.session_id}
+#     limit: 3
+
+# - name: retrieve_knowledge
+#   type: python
+#   source:
+#     type: code
+#     path: nodes/retrieve_knowledge.py
+#   inputs:
+#     query: ${inputs.query}
+#     intent: ${detect_intent.output.intent}
+#     top_k: 5
+
+# - name: build_prompt
+#   type: prompt
+#   source:
+#     type: code
+#     path: templates/customer_service.jinja2
+#   inputs:
+#     query: ${inputs.query}
+#     context: ${retrieve_knowledge.output}
+#     intent: ${detect_intent.output.intent}
+#     history: ${load_memory.output}
+
+# - name: generate_response
+#   type: python
+#   source:
+#     type: code
+#     path: nodes/generate_response.py
+#   inputs:
+#     prompt: ${build_prompt.output}
+#     max_tokens: 1024
+#     temperature: 0.7
+
+

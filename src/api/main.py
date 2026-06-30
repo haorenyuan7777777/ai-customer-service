@@ -1,28 +1,133 @@
 """
-FastAPI主服务
-提供对话、知识库、管理接口
+FastAPI主应用
+- 启动时异步预热关键模型（不阻塞）
+- 请求时等待预热完成（或超时降级）
+- 保留延迟加载兜底
 """
+
+import asyncio
+import os
+import sys
+import time
+import logging
+from pathlib import Path
+from contextlib import asynccontextmanager
+from typing import Optional, Dict, Any
+
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-from typing import List, Optional
-import json
 
-from src.agent.agent_core import CustomerServiceAgent
-from src.agent.memory import ChatMemory
-from src.rag.milvus_store import MilvusKnowledgeStore
-from src.models.embedding_model import BGEEmbedding
-from src.config import API, get_gpu_memory_info
+PROJECT_ROOT = Path(__file__).parent.parent.parent
+sys.path.insert(0, str(PROJECT_ROOT))
+
+from src.config import API
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 
-# 创建FastAPI应用
+# ============ Pydantic模型 ============
+class ChatRequest(BaseModel):
+    message: str
+    user_id: Optional[str] = "anonymous"
+    session_id: Optional[str] = "default"
+    use_flow: Optional[bool] = True
+
+class ChatResponse(BaseModel):
+    response: str
+    intent: str = "标准客服"
+    category: str = "general"
+    context_used: Optional[str] = None
+    execution_time_ms: float = 0.0
+
+
+# ============ 全局状态 ============
+_agent = None
+_rag = None
+_flow = None
+_ready = False
+_ready_event = asyncio.Event()
+_preheat_task = None
+
+
+async def _preheat_models():
+    """异步预热所有关键模型"""
+    global _agent, _rag, _ready
+    try:
+        logger.info("🔄 开始后台预热模型...")
+        
+        # 预热 Embedding（轻量，优先）
+        from src.models.embedding_model import get_embedding_model
+        get_embedding_model()
+        logger.info("   ✅ Embedding模型就绪")
+        
+        # 预热 RAG（较重）
+        from src.rag.llama_index_rag import get_rag_engine
+        _rag = get_rag_engine()
+        logger.info("   ✅ RAG引擎就绪")
+        
+        # 预热 Agent（依赖上述组件）
+        from src.agent.agent_core import get_agent
+        _agent = get_agent()
+        logger.info("   ✅ Agent就绪")
+        
+        # 预热 Promptflow（可选，非关键）
+        try:
+            from src.promptflow.flow_engine import get_flow_engine
+            _flow = get_flow_engine()
+            logger.info("   ✅ Promptflow引擎就绪")
+        except Exception as e:
+            logger.warning(f"   ⚠️ Promptflow预热失败（非关键）: {e}")
+        
+        _ready = True
+        _ready_event.set()
+        logger.info("✅ 所有模型预热完成")
+    except Exception as e:
+        logger.error(f"❌ 预热失败: {e}")
+        # 即使预热失败，也设置事件，后续请求可尝试延迟加载
+        _ready_event.set()
+
+
+def get_agent_smart():
+    """智能获取Agent：优先使用预热实例，否则延迟加载"""
+    global _agent
+    if _agent is not None:
+        return _agent
+    # 如果尚未加载，延迟加载（兜底）
+    from src.agent.agent_core import get_agent
+    _agent = get_agent()
+    return _agent
+
+
+def get_rag_smart():
+    """智能获取RAG"""
+    global _rag
+    if _rag is not None:
+        return _rag
+    from src.rag.llama_index_rag import get_rag_engine
+    _rag = get_rag_engine()
+    return _rag
+
+
+# ============ 生命周期 ============
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    global _preheat_task
+    logger.info("🚀 FastAPI启动中...")
+    # 启动后台预热任务
+    _preheat_task = asyncio.create_task(_preheat_models())
+    logger.info("   后台预热已启动，服务已就绪（可接收请求）")
+    yield
+    logger.info("👋 FastAPI关闭中...")
+
+
+# ============ 创建应用 ============
 app = FastAPI(
-    title="AI客服系统",
-    description="基于Milvus + LlamaIndex + Promptflow的智能客服",
-    version="1.0.0"
+    title="AI客服系统API",
+    version="1.0.0",
+    lifespan=lifespan
 )
-
-# CORS中间件
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -31,251 +136,106 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# 全局实例（延迟初始化）
-agent = None
-memory = None
-knowledge_store = None
-embedding_model = None
+
+# ============ 路由 ============
+@app.get("/")
+async def root():
+    return {"name": "AI客服系统API", "version": "1.0.0", "docs": "/docs"}
 
 
-def get_agent():
-    global agent
-    if agent is None:
-        agent = CustomerServiceAgent()
-    return agent
-
-
-def get_memory():
-    global memory
-    if memory is None:
-        memory = ChatMemory()
-    return memory
-
-
-def get_knowledge_store():
-    global knowledge_store
-    if knowledge_store is None:
-        knowledge_store = MilvusKnowledgeStore()
-    return knowledge_store
-
-
-def get_embedding():
-    global embedding_model
-    if embedding_model is None:
-        embedding_model = BGEEmbedding()
-    return embedding_model
-
-
-# ========== 数据模型 ==========
-class ChatRequest(BaseModel):
-    query: str
-    session_id: str = "default"
-    history: Optional[List[dict]] = None
-
-
-class ChatResponse(BaseModel):
-    response: str
-    intent: str
-    intent_confidence: float
-    sources: List[dict]
-    session_id: str
-
-
-class KnowledgeItem(BaseModel):
-    instruction: str
-    output: str
-    category: str = "general"
-    intent: str = "general_query"
-
-
-class KnowledgeSearchRequest(BaseModel):
-    query: str
-    top_k: int = 5
-
-
-# ========== 对话接口 ==========
-@app.post("/api/v1/chat", response_model=ChatResponse)
-async def chat(request: ChatRequest):
-    """
-    对话接口 - 核心入口
-    
-    处理流程:
-    1. 意图识别
-    2. 记忆加载
-    3. RAG检索
-    4. LLM生成
-    5. 记忆保存
-    """
-    try:
-        service_agent = get_agent()
-        result = service_agent.process(request.query, request.session_id)
-        
-        return ChatResponse(
-            response=result["response"],
-            intent=result["intent"],
-            intent_confidence=result["intent_confidence"],
-            sources=result["sources"],
-            session_id=request.session_id
-        )
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-# ========== 知识库接口 ==========
-@app.post("/api/v1/knowledge")
-async def add_knowledge(item: KnowledgeItem):
-    """添加知识到知识库"""
-    try:
-        store = get_knowledge_store()
-        emb = get_embedding()
-        
-        # 向量化
-        vector = emb.encode([item.instruction], show_progress=False)[0]
-        
-        # 生成ID
-        import uuid
-        doc_id = f"doc_{uuid.uuid4().hex[:12]}"
-        
-        # 插入Milvus
-        store.insert(
-            ids=[doc_id],
-            vectors=vector.reshape(1, -1),
-            instructions=[item.instruction],
-            outputs=[item.output],
-            categories=[item.category],
-            intents=[item.intent]
-        )
-        
-        return {"status": "success", "id": doc_id}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@app.get("/api/v1/knowledge/search")
-async def search_knowledge(query: str, top_k: int = 5):
-    """检索知识库"""
-    try:
-        store = get_knowledge_store()
-        emb = get_embedding()
-        
-        query_vector = emb.encode_queries([query])[0]
-        results = store.search(query_vector, top_k=top_k)
-        
-        return {"results": results}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@app.delete("/api/v1/knowledge/{doc_id}")
-async def delete_knowledge(doc_id: str):
-    """删除知识"""
-    try:
-        store = get_knowledge_store()
-        store.delete_by_ids([doc_id])
-        return {"status": "success", "deleted_id": doc_id}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-# ========== 管理接口 ==========
-@app.get("/api/v1/health")
-async def health_check():
-    """健康检查"""
-    gpu_info = get_gpu_memory_info()
+@app.get("/health")
+async def health():
+    """健康检查：返回服务状态和预热进度"""
     return {
-        "status": "healthy",
-        "gpu": gpu_info,
-        "timestamp": json.dumps({"now": "ok"})
+        "status": "ready" if _ready else "warming_up",
+        "services": {
+            "vllm": _check_port("localhost", 8000),
+            "milvus_grpc": _check_port("localhost", 19530),
+            "milvus_http": _check_port("localhost", 9091),
+        }
     }
 
 
-@app.get("/api/v1/stats")
-async def get_stats():
-    """系统统计信息"""
+@app.post("/chat", response_model=ChatResponse)
+async def chat(request: ChatRequest):
+    start = time.perf_counter()
+    
+    # 等待预热完成（最多30秒）
+    if not _ready:
+        try:
+            await asyncio.wait_for(_ready_event.wait(), timeout=30.0)
+        except asyncio.TimeoutError:
+            logger.warning("⏰ 预热超时，尝试延迟加载")
+    
     try:
-        store = get_knowledge_store()
-        mem = get_memory()
-        gpu_info = get_gpu_memory_info()
-        
-        return {
-            "milvus": store.get_stats(),
-            "memory": mem.get_stats(),
-            "gpu": gpu_info
-        }
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@app.get("/api/v1/conversations")
-async def list_conversations(limit: int = 100):
-    """列出所有会话"""
-    try:
-        mem = get_memory()
-        sessions = mem.get_sessions(limit=limit)
-        return {"sessions": sessions}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@app.get("/api/v1/conversations/{session_id}")
-async def get_conversation(session_id: str):
-    """获取指定会话的历史"""
-    try:
-        mem = get_memory()
-        history = mem.get_history(session_id)
-        return {"session_id": session_id, "history": history}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@app.get("/api/v1/conversations/export")
-async def export_conversations():
-    """导出对话记录为Excel"""
-    try:
-        import pandas as pd
-        from io import BytesIO
-        from fastapi.responses import StreamingResponse
-        
-        mem = get_memory()
-        
-        # 获取所有会话
-        sessions = mem.get_sessions(limit=1000)
-        
-        # 收集所有对话记录
-        all_records = []
-        for session_id in sessions:
-            history = mem.get_history(session_id, limit=1000)
-            for entry in history:
-                all_records.append({
-                    "session_id": session_id,
-                    "role": entry["role"],
-                    "content": entry["content"],
-                    "intent": entry.get("intent", ""),
-                    "timestamp": entry["timestamp"]
-                })
-        
-        # 创建Excel
-        df = pd.DataFrame(all_records)
-        output = BytesIO()
-        df.to_excel(output, index=False, sheet_name="对话记录")
-        output.seek(0)
-        
-        return StreamingResponse(
-            output,
-            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            headers={"Content-Disposition": "attachment; filename=conversations.xlsx"}
+        agent = get_agent_smart()
+        result = agent.chat(
+            user_message=request.message,
+            user_id=request.user_id,
+            session_id=request.session_id,
+            use_flow=request.use_flow
+        )
+        elapsed = (time.perf_counter() - start) * 1000
+        return ChatResponse(
+            response=result.get("response", ""),
+            intent=result.get("intent", "标准客服"),
+            category=result.get("category", "general"),
+            context_used=result.get("context_used", "")[:200] if result.get("context_used") else None,
+            execution_time_ms=round(elapsed, 2)
         )
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"聊天接口错误: {e}")
+        # 降级响应
+        return ChatResponse(
+            response=f"系统暂时繁忙，请稍后重试。（{str(e)[:50]}）",
+            execution_time_ms=round((time.perf_counter() - start) * 1000, 2)
+        )
 
 
-# ========== 启动入口 ==========
+@app.get("/metrics")
+async def metrics():
+    import psutil
+    try:
+        import torch
+        gpu_alloc = torch.cuda.memory_allocated() / 1024**3 if torch.cuda.is_available() else None
+        gpu_total = torch.cuda.get_device_properties(0).total_memory / 1024**3 if torch.cuda.is_available() else None
+    except:
+        gpu_alloc = gpu_total = None
+    return {
+        "cpu_percent": psutil.cpu_percent(),
+        "memory_percent": psutil.virtual_memory().percent,
+        "gpu_allocated_gb": round(gpu_alloc, 2) if gpu_alloc else None,
+        "gpu_total_gb": round(gpu_total, 2) if gpu_total else None,
+        "models_ready": _ready
+    }
+
+
+def _check_port(host, port):
+    import socket
+    try:
+        with socket.create_connection((host, port), timeout=1):
+            return True
+    except:
+        return False
+
+
+# ============ 子路由（可选） ============
+try:
+    from src.api.routers import admin, chat as chat_router, knowledge
+    app.include_router(admin.router, prefix="/api/v1")
+    app.include_router(chat_router.router, prefix="/api/v1")
+    app.include_router(knowledge.router, prefix="/api/v1")
+    logger.info("✅ 子路由加载成功")
+except Exception as e:
+    logger.warning(f"⚠️ 子路由加载失败: {e}")
+
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(
         "src.api.main:app",
-        host=API["host"],
-        port=API["port"],
-        workers=API["workers"],
+        host=API.get("host", "0.0.0.0"),
+        port=API.get("port", 8080),
+        workers=1,
         reload=False
     )

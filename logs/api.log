@@ -1,0 +1,60 @@
+/root/miniconda3/envs/ai-customer-service/lib/python3.12/site-packages/torch/cuda/__init__.py:63: FutureWarning: The pynvml package is deprecated. Please install nvidia-ml-py instead. If you did not install pynvml directly, please report this to the maintainers of the package that installed pynvml for you.
+  import pynvml  # type: ignore[import]
+INFO:datasets:PyTorch version 2.12.1+cu132 available.
+/root/miniconda3/envs/ai-customer-service/lib/python3.12/site-packages/pydantic/_internal/_generate_schema.py:2274: UnsupportedFieldAttributeWarning: The 'validate_default' attribute with value True was provided to the `Field()` function, which has no effect in the context it was used. 'validate_default' is field-specific metadata, and can only be attached to a model field using `Annotated` metadata or by assignment. This may have happened because an `Annotated` type alias using the `type` statement was used, or if the `Field()` function was attached to a single member of a union type.
+  warnings.warn(
+INFO:src.api.main:✅ 子路由加载成功
+INFO:     Started server process [13753]
+INFO:     Waiting for application startup.
+INFO:src.api.main:🚀 FastAPI启动中...
+INFO:src.api.main:   后台预热已启动，服务已就绪（可接收请求）
+INFO:src.api.main:🔄 开始后台预热模型...
+INFO:src.models.embedding_model:🚀 加载BGE-small-zh模型: /mnt/e/modelscope/BAAI/bge-small-zh-v1.5 → cuda
+INFO:sentence_transformers.SentenceTransformer:Load pretrained SentenceTransformer: /mnt/e/modelscope/BAAI/bge-small-zh-v1.5
+INFO:src.models.embedding_model:✅ BGE模型加载完成，显存占用: 0.09GB
+INFO:src.api.main:   ✅ Embedding模型就绪
+/mnt/e/Project/ai-customer-service/src/rag/milvus_store.py:59: PyMilvusDeprecationWarning: `connections.connect` is an ORM-style PyMilvus API and will be removed in PyMilvus 3.1. Use `MilvusClient` instead.
+  connections.connect(
+INFO:src.rag.milvus_store:✅ Milvus连接成功: localhost:19530
+/mnt/e/Project/ai-customer-service/src/rag/milvus_store.py:123: PyMilvusDeprecationWarning: `Collection` is an ORM-style PyMilvus API and will be removed in PyMilvus 3.1. Use `MilvusClient` instead.
+  self.collection = Collection(self.config.collection_name)
+/mnt/e/Project/ai-customer-service/src/rag/milvus_store.py:124: PyMilvusDeprecationWarning: `Collection.load` is an ORM-style PyMilvus API and will be removed in PyMilvus 3.1. Use `MilvusClient` instead.
+  self.collection.load()
+INFO:src.rag.milvus_store:✅ Collection已加载: knowledge_base
+INFO:src.rag.llama_index_rag:✅ Milvus预热完成
+INFO:src.rag.llama_index_rag:✅ LlamaIndex RAG引擎初始化完成
+INFO:src.api.main:   ✅ RAG引擎就绪
+INFO:src.agent.intent_classifier:🚀 加载意图模型: /mnt/e/modelscope/google-bert/bert-base-chinese → cuda
+Some weights of BertForSequenceClassification were not initialized from the model checkpoint at /mnt/e/modelscope/google-bert/bert-base-chinese and are newly initialized: ['classifier.bias', 'classifier.weight']
+You should probably TRAIN this model on a down-stream task to be able to use it for predictions and inference.
+INFO:src.agent.intent_classifier:✅ 意图模型加载完成，显存占用: 0.47GB
+INFO:src.agent.memory:✅ 记忆数据库初始化完成: data/chat_memory.db
+INFO:src.agent.tools:🔧 注册工具: query_order
+INFO:src.agent.tools:🔧 注册工具: transfer_to_human
+INFO:src.agent.tools:🔧 注册工具: check_inventory
+INFO:src.agent.tools:🔧 注册工具: send_email
+INFO:src.agent.tools:🔧 注册工具: create_ticket
+WARNING:src.models.llm_client:⚠️ vLLM检测失败（第1次）: ('Connection aborted.', ConnectionResetError(104, 'Connection reset by peer'))
+WARNING:src.models.llm_client:⚠️ vLLM检测失败（第2次）: ('Connection aborted.', ConnectionResetError(104, 'Connection reset by peer'))
+WARNING:src.models.llm_client:⚠️ vLLM检测失败（第3次）: ('Connection aborted.', ConnectionResetError(104, 'Connection reset by peer'))
+ERROR:src.models.llm_client:❌ vLLM检测全部失败，后续请求将尝试动态检测
+INFO:src.promptflow.flow_engine:  加载节点: assemble_prompt
+Some weights of BertForSequenceClassification were not initialized from the model checkpoint at /mnt/e/modelscope/google-bert/bert-base-chinese and are newly initialized: ['classifier.bias', 'classifier.weight']
+You should probably TRAIN this model on a down-stream task to be able to use it for predictions and inference.
+INFO:src.promptflow.flow_engine:  加载节点: detect_intent
+INFO:src.promptflow.flow_engine:  加载节点: generate_response
+INFO:src.promptflow.flow_engine:  加载节点: load_memory
+INFO:src.promptflow.flow_engine:  加载节点: retrieve_knowledge
+INFO:src.promptflow.flow_engine:  加载节点: save_memory
+INFO:src.promptflow.flow_engine:✅ Promptflow引擎初始化完成: flows/flow.dag.yaml
+INFO:src.agent.agent_core:🤖 Agent初始化完成
+INFO:src.api.main:   ✅ Agent就绪
+INFO:src.api.main:   ✅ Promptflow引擎就绪
+INFO:src.api.main:✅ 所有模型预热完成
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://0.0.0.0:8080 (Press CTRL+C to quit)
+INFO:     Shutting down
+INFO:     Waiting for application shutdown.
+INFO:src.api.main:👋 FastAPI关闭中...
+INFO:     Application shutdown complete.
+INFO:     Finished server process [13753]

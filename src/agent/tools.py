@@ -1,185 +1,212 @@
 """
-工具调用注册中心
-支持Python函数注册、参数验证、执行
+Agent工具集
+- Python函数实现的工具调用
+- 支持：查询订单、转人工、发送邮件、查询库存等
+
+【演示实现】：模拟数据返回
+【生产目标】：对接真实业务系统API
 """
-import inspect
-from typing import Dict, List, Callable, Any
-from functools import wraps
+
+import logging
+import random
+from typing import Dict, Any, Optional
+from datetime import datetime
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 
 class ToolRegistry:
-    """工具注册中心"""
+    """工具注册表"""
     
     def __init__(self):
-        self._tools: Dict[str, Dict] = {}
+        self.tools: Dict[str, Any] = {}
+        self._register_default_tools()
     
-    def register(self, name: str = None, description: str = ""):
-        """
-        工具注册装饰器
-        
-        Args:
-            name: 工具名称，默认使用函数名
-            description: 工具描述
-        
-        Example:
-            @registry.register(name="get_price", description="查询价格")
-            def get_price(product: str) -> dict:
-                return {"price": 199.99}
-        """
-        def decorator(func: Callable):
-            tool_name = name or func.__name__
-            
-            # 获取函数签名
-            sig = inspect.signature(func)
-            params = []
-            for param_name, param in sig.parameters.items():
-                param_info = {
-                    "name": param_name,
-                    "type": str(param.annotation) if param.annotation != inspect.Parameter.empty else "any",
-                    "required": param.default == inspect.Parameter.empty
-                }
-                params.append(param_info)
-            
-            self._tools[tool_name] = {
-                "name": tool_name,
-                "description": description or func.__doc__ or "",
-                "function": func,
-                "parameters": params
+    def _register_default_tools(self):
+        """注册默认工具"""
+        self.register("query_order", query_order)
+        self.register("transfer_to_human", transfer_to_human)
+        self.register("check_inventory", check_inventory)
+        self.register("send_email", send_email)
+        self.register("create_ticket", create_ticket)
+    
+    def register(self, name: str, func):
+        """注册工具"""
+        self.tools[name] = func
+        logger.info(f"🔧 注册工具: {name}")
+    
+    def call(self, name: str, **kwargs) -> Dict[str, Any]:
+        """调用工具"""
+        if name not in self.tools:
+            return {
+                "success": False,
+                "error": f"工具不存在: {name}",
+                "data": None
             }
-            
-            @wraps(func)
-            def wrapper(*args, **kwargs):
-                return func(*args, **kwargs)
-            
-            return wrapper
-        return decorator
-    
-    def list_tools(self) -> List[Dict]:
-        """列出所有可用工具"""
-        return [
-            {
-                "name": t["name"],
-                "description": t["description"],
-                "parameters": t["parameters"]
-            }
-            for t in self._tools.values()
-        ]
-    
-    def get_tool(self, name: str) -> Dict:
-        """获取工具信息"""
-        if name not in self._tools:
-            raise ValueError(f"工具 '{name}' 不存在。可用工具: {list(self._tools.keys())}")
-        return self._tools[name]
-    
-    def execute(self, name: str, params: Dict[str, Any]) -> Any:
-        """
-        执行工具
-        
-        Args:
-            name: 工具名称
-            params: 参数字典
-        
-        Returns:
-            工具执行结果
-        """
-        tool = self.get_tool(name)
-        func = tool["function"]
         
         try:
-            result = func(**params)
+            result = self.tools[name](**kwargs)
             return {
-                "status": "success",
-                "tool": name,
-                "result": result
+                "success": True,
+                "data": result
             }
         except Exception as e:
             return {
-                "status": "error",
-                "tool": name,
-                "error": str(e)
+                "success": False,
+                "error": str(e),
+                "data": None
             }
     
-    def execute_by_intent(self, intent: str, context: Dict) -> Dict:
-        """
-        根据意图自动选择并执行工具
-        
-        Args:
-            intent: 意图标签
-            context: 上下文信息
-        """
-        intent_tool_map = {
-            "price_inquiry": "get_price",
-            "purchase_intent": "create_order",
-            "technical_issue": "troubleshoot",
+    def list_tools(self) -> list:
+        """列出所有工具"""
+        return list(self.tools.keys())
+
+
+# ============ 具体工具实现 ============
+
+def query_order(order_id: Optional[str] = None, phone: Optional[str] = None) -> Dict:
+    """
+    查询订单信息
+    
+    【演示实现】：返回模拟数据
+    """
+    logger.info(f"🔍 查询订单: order_id={order_id}, phone={phone}")
+    
+    # 模拟数据
+    mock_orders = {
+        "ORD2024001": {
+            "order_id": "ORD2024001",
+            "status": "已发货",
+            "product": "铅酸蓄电池 12V 100Ah",
+            "amount": 599.00,
+            "create_time": "2024-01-15",
+            "tracking": "SF1234567890"
+        },
+        "ORD2024002": {
+            "order_id": "ORD2024002",
+            "status": "待付款",
+            "product": "锂电池 48V 20Ah",
+            "amount": 1299.00,
+            "create_time": "2024-01-20",
+            "tracking": None
         }
-        
-        tool_name = intent_tool_map.get(intent)
-        if tool_name and tool_name in self._tools:
-            return self.execute(tool_name, context)
-        
+    }
+    
+    if order_id and order_id in mock_orders:
+        return mock_orders[order_id]
+    
+    # 模糊匹配
+    if phone:
         return {
-            "status": "no_tool",
-            "message": f"意图 '{intent}' 没有对应的工具"
+            "orders": [
+                {"order_id": "ORD2024001", "status": "已发货", "amount": 599.00},
+                {"order_id": "ORD2024003", "status": "已完成", "amount": 299.00}
+            ],
+            "total": 2
         }
+    
+    return {"error": "未找到订单，请提供订单号或手机号"}
 
 
-# 创建全局注册中心
-tool_registry = ToolRegistry()
-
-
-# ========== 预定义工具 ==========
-@tool_registry.register(name="get_price", description="查询产品价格")
-def get_price(product: str) -> dict:
-    """查询指定产品的价格"""
-    # 演示实现：模拟价格查询
-    price_map = {
-        "铅酸电池": 299.99,
-        "锂电池": 599.99,
-        "充电器": 89.99,
-    }
+def transfer_to_human(reason: str = "", priority: str = "normal") -> Dict:
+    """
+    转接人工客服
+    
+    【演示实现】：记录转接请求
+    """
+    logger.info(f"👤 转接人工: reason={reason}, priority={priority}")
+    
+    ticket_id = f"TKT{datetime.now().strftime('%Y%m%d%H%M%S')}{random.randint(100,999)}"
+    
     return {
-        "product": product,
-        "price": price_map.get(product, "暂无报价"),
-        "currency": "CNY"
+        "ticket_id": ticket_id,
+        "status": "queued",
+        "estimated_wait": "3-5分钟",
+        "queue_position": random.randint(1, 10),
+        "message": f"已为您创建工单 {ticket_id}，预计等待3-5分钟，请保持在线。"
     }
 
 
-@tool_registry.register(name="check_stock", description="检查产品库存")
-def check_stock(product: str) -> dict:
-    """检查指定产品的库存状态"""
-    import random
-    stock = random.randint(0, 500)
+def check_inventory(product_name: str) -> Dict:
+    """
+    查询库存
+    
+    【演示实现】：模拟库存数据
+    """
+    logger.info(f"📦 查询库存: {product_name}")
+    
+    mock_inventory = {
+        "铅酸蓄电池": {"stock": 156, "warehouse": "上海仓", "restock_date": "2024-02-01"},
+        "锂电池": {"stock": 23, "warehouse": "深圳仓", "restock_date": "2024-01-25"},
+        "充电器": {"stock": 500, "warehouse": "上海仓", "restock_date": None}
+    }
+    
+    # 模糊匹配
+    for key, value in mock_inventory.items():
+        if key in product_name or product_name in key:
+            return {
+                "product": key,
+                **value,
+                "available": value["stock"] > 0
+            }
+    
+    return {"error": f"未找到产品: {product_name}"}
+
+
+def send_email(to: str, subject: str, content: str) -> Dict:
+    """
+    发送邮件
+    
+    【演示实现】：模拟发送
+    """
+    logger.info(f"📧 发送邮件: to={to}, subject={subject}")
+    
     return {
-        "product": product,
-        "stock": stock,
-        "available": stock > 0
+        "message_id": f"MSG{random.randint(100000, 999999)}",
+        "status": "sent",
+        "to": to,
+        "sent_at": datetime.now().isoformat()
     }
 
 
-@tool_registry.register(name="create_order", description="创建订单")
-def create_order(product: str, quantity: int = 1) -> dict:
-    """创建购买订单"""
-    import uuid
-    order_id = f"ORD-{uuid.uuid4().hex[:8].upper()}"
+def create_ticket(
+    user_id: str,
+    category: str,
+    description: str,
+    priority: str = "normal"
+) -> Dict:
+    """
+    创建工单
+    
+    【演示实现】：模拟工单系统
+    """
+    logger.info(f"🎫 创建工单: user={user_id}, category={category}")
+    
+    ticket_id = f"TKT{datetime.now().strftime('%Y%m%d%H%M%S')}"
+    
     return {
-        "order_id": order_id,
-        "product": product,
-        "quantity": quantity,
-        "status": "created"
+        "ticket_id": ticket_id,
+        "status": "open",
+        "category": category,
+        "priority": priority,
+        "created_at": datetime.now().isoformat(),
+        "message": f"工单 {ticket_id} 已创建，我们将尽快处理。"
     }
 
 
-@tool_registry.register(name="troubleshoot", description="故障排查指导")
-def troubleshoot(product: str, symptom: str) -> dict:
-    """提供故障排查建议"""
-    guides = {
-        "无法充电": "请检查充电器连接和电池接触点",
-        "续航短": "建议进行电池校准或更换老化电池",
-        "发热": "立即停止使用，检查是否过充",
-    }
-    return {
-        "product": product,
-        "symptom": symptom,
-        "guide": guides.get(symptom, "请联系技术支持"),
-        "urgent": symptom in ["发热", "冒烟"]
-    }
+# 全局注册表
+_tool_registry: Optional[ToolRegistry] = None
+
+def get_tool_registry() -> ToolRegistry:
+    """获取工具注册表单例"""
+    global _tool_registry
+    if _tool_registry is None:
+        _tool_registry = ToolRegistry()
+    return _tool_registry
+
+
+def run_tool(name: str, **kwargs) -> Dict[str, Any]:
+    """便捷调用工具"""
+    registry = get_tool_registry()
+    return registry.call(name, **kwargs)

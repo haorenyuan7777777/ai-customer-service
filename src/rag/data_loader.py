@@ -12,7 +12,7 @@ import numpy as np
 from tqdm import tqdm
 
 from src.config import DATA_SPLIT
-from src.models.embedding_model import BGEEmbedding
+from src.models.embedding_model import BGEEmbeddingModel
 
 
 class AlpacaDataLoader:
@@ -76,7 +76,7 @@ class AlpacaDataLoader:
             pass
         
         raise ValueError(f"无法解析数据文件: {self.data_path}，请检查格式")
-    
+        
     def _extract_json_objects(self, content: str) -> List[Dict]:
         """从文本中提取所有JSON对象"""
         objects = []
@@ -191,7 +191,7 @@ class AlpacaDataLoader:
     
     def vectorize(self, data: List[Dict], batch_size: int = 500) -> np.ndarray:
         """批量向量化instruction字段"""
-        embedding = BGEEmbedding()
+        embedding = BGEEmbeddingModel()
         
         texts = [item["instruction"] for item in data]
         print(f"[DataLoader] 开始向量化 {len(texts)} 条数据，批次大小: {batch_size}...")
@@ -210,7 +210,7 @@ class AlpacaDataLoader:
     def prepare_for_milvus(self, data: List[Dict], vectors: np.ndarray) -> Dict:
         """准备Milvus插入数据"""
         return {
-            "ids": [str(item.get("id", f"doc_{i}")) for i, item in enumerate(data)],
+            "ids": [item.get("id", i) for i, item in enumerate(data)],
             "vectors": vectors,
             "instructions": [item["instruction"] for item in data],
             "outputs": [item["output"] for item in data],
@@ -229,8 +229,12 @@ def build_knowledge_base(data_path: str, output_dir: str = "data/processed"):
     4. 训练集GPU向量化（批量500）
     5. 插入Milvus
     6. 验证入库数量
+    
+    变更:
+    - 全部数据(11157条)插入Milvus用于检索
+    - 训练/测试划分仅用于意图模型微调和数据评测
     """
-    from src.rag.milvus_store import MilvusKnowledgeStore
+    from src.rag.milvus_store import MilvusStore
     import torch
     
     print("=" * 60)
@@ -242,18 +246,19 @@ def build_knowledge_base(data_path: str, output_dir: str = "data/processed"):
     loader.load()
     
     # 2. 划分
-    train_data, test_data = loader.split()
+    # train_data, test_data = loader.split()
     loader.save_split(output_dir)
     
     # 3. 向量化训练集
+    all_data = loader.raw_data
     print(f"\n[KnowledgeBase] GPU显存状态: {torch.cuda.memory_allocated()/1024**3:.2f}GB")
-    train_vectors = loader.vectorize(train_data, batch_size=500)
+    all_vectors = loader.vectorize(all_data, batch_size=500)
     
     # 4. 插入Milvus
     print(f"\n[KnowledgeBase] 开始插入Milvus...")
-    store = MilvusKnowledgeStore()
+    store = MilvusStore()
     store.clear_collection()  # ← 新增：清空旧数据
-    milvus_data = loader.prepare_for_milvus(train_data, train_vectors)
+    milvus_data = loader.prepare_for_milvus(all_data, all_vectors)
     
     # 分批插入（避免单次请求过大）
     batch_size = 1000
@@ -272,11 +277,25 @@ def build_knowledge_base(data_path: str, output_dir: str = "data/processed"):
     # 5. 验证
     stats = store.get_stats()
     print(f"\n[KnowledgeBase] 构建完成!")
-    print(f"  Milvus实体数: {stats['num_entities']}")
-    print(f"  预期训练集: {len(train_data)}")
-    print(f"  验证: {'✅ 通过' if stats['num_entities'] == len(train_data) else '❌ 不匹配'}")
+    print(f"  Milvus实体数: {stats['total_entities']}")
+    print(f"  预期训练集: {len(all_data)}")
+    print(f"  验证: {'✅ 通过' if stats['total_entities'] == len(all_data) else '❌ 不匹配'}")
     
     return stats
+
+def load_alpaca_data(file_path: str = None) -> List[Dict]:
+    """加载 Alpaca 格式数据（兼容接口）"""
+    from src.config import DATA_PATHS
+    import json
+    path = file_path or DATA_PATHS.get("raw")
+    if not path or not Path(path).exists():
+        return []
+    with open(path, 'r', encoding='utf-8') as f:
+        data = json.load(f)
+    # 确保返回列表
+    if isinstance(data, dict):
+        return [data]
+    return data
 
 
 if __name__ == "__main__":

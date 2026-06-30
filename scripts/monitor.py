@@ -1,165 +1,205 @@
 #!/usr/bin/env python3
 """
-资源监控脚本 - 实时监控显存/内存/磁盘
-用法: python scripts/monitor.py [--interval 5]
+资源监控守护脚本
+- 实时监控：CPU/内存/磁盘/GPU
+- 告警阈值：内存>80%、显存>90%、磁盘>85%
+- 日志输出到 logs/monitor.log
+- 支持后台运行（nohup）
 """
+
+import os
+import sys
 import time
-import argparse
 import json
+import logging
+import argparse
+from pathlib import Path
 from datetime import datetime
 
-try:
-    import pynvml
-    PYNVML_AVAILABLE = True
-except ImportError:
-    PYNVML_AVAILABLE = False
+sys.path.insert(0, str(Path(__file__).parent.parent))
 
-import psutil
+# 配置日志
+LOG_DIR = Path("logs")
+LOG_DIR.mkdir(exist_ok=True)
+
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.FileHandler(LOG_DIR / "monitor.log"),
+        logging.StreamHandler()
+    ]
+)
+logger = logging.getLogger("monitor")
 
 
-class ResourceMonitor:
-    def __init__(self):
-        self.gpu_available = False
-        if PYNVML_AVAILABLE:
-            try:
-                pynvml.nvmlInit()
-                self.gpu_available = True
-                self.gpu_count = pynvml.nvmlDeviceGetCount()
-            except:
-                pass
+class SystemMonitor:
+    """系统资源监控器"""
     
-    def get_gpu_info(self):
-        if not self.gpu_available:
-            return []
-        info = []
-        for i in range(self.gpu_count):
-            handle = pynvml.nvmlDeviceGetHandleByIndex(i)
-            mem = pynvml.nvmlDeviceGetMemoryInfo(handle)
-            util = pynvml.nvmlDeviceGetUtilizationRates(handle)
-            name = pynvml.nvmlDeviceGetName(handle)
-            info.append({
-                'id': i,
-                'name': name.decode() if isinstance(name, bytes) else name,
-                'total_mb': mem.total // 1024**2,
-                'used_mb': mem.used // 1024**2,
-                'free_mb': mem.free // 1024**2,
-                'utilization': util.gpu,
-                'temperature': pynvml.nvmlDeviceGetTemperature(handle, pynvml.NVML_TEMPERATURE_GPU)
-            })
-        return info
+    # 告警阈值
+    THRESHOLDS = {
+        "cpu_percent": 90,
+        "memory_percent": 80,
+        "disk_percent": 85,
+        "gpu_percent": 90,
+        "gpu_growth_gb": 2.0  # 显存增长超过2G告警
+    }
     
-    def get_memory_info(self):
-        mem = psutil.virtual_memory()
-        swap = psutil.swap_memory()
-        return {
-            'total_gb': mem.total / 1024**3,
-            'available_gb': mem.available / 1024**3,
-            'used_gb': mem.used / 1024**3,
-            'percent': mem.percent,
-            'swap_used_gb': swap.used / 1024**3,
-            'swap_total_gb': swap.total / 1024**3
-        }
-    
-    def get_disk_info(self):
-        disk = psutil.disk_usage('/')
-        return {
-            'total_gb': disk.total / 1024**3,
-            'used_gb': disk.used / 1024**3,
-            'free_gb': disk.free / 1024**3,
-            'percent': disk.percent
-        }
-    
-    def check_alerts(self, gpu_info, mem_info, disk_info):
-        alerts = []
-        # 显存告警 (>14G / 16G = 87.5%)
-        for gpu in gpu_info:
-            if gpu['used_mb'] > 14336:  # 14GB
-                alerts.append(f"🚨 GPU{gpu['id']}显存告警: {gpu['used_mb']/1024:.1f}GB / {gpu['total_mb']/1024:.1f}GB")
-        # 内存告警 (>12G / 14G = 85%)
-        if mem_info['used_gb'] > 12:
-            alerts.append(f"🚨 内存告警: {mem_info['used_gb']:.1f}GB / {mem_info['total_gb']:.1f}GB")
-        # 磁盘告警 (>35G / 40G = 87.5%)
-        if disk_info['free_gb'] < 5:
-            alerts.append(f"🚨 磁盘告警: 仅剩 {disk_info['free_gb']:.1f}GB")
-        return alerts
-    
-    def print_status(self):
-        now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        gpu_info = self.get_gpu_info()
-        mem_info = self.get_memory_info()
-        disk_info = self.get_disk_info()
+    def __init__(self, interval: int = 5):
+        self.interval = interval
+        self.alert_history = []
+        self.initial_gpu = None
         
-        print(f"\n{'='*60}")
-        print(f"📊 资源监控 | {now}")
-        print(f"{'='*60}")
+        try:
+            import psutil
+            self.psutil = psutil
+        except ImportError:
+            logger.error("❌ psutil未安装，运行: pip install psutil")
+            sys.exit(1)
+    
+    def get_metrics(self) -> dict:
+        """获取当前指标"""
+        metrics = {
+            "timestamp": datetime.now().isoformat(),
+            "cpu_percent": self.psutil.cpu_percent(),
+            "memory": self.psutil.virtual_memory()._asdict(),
+            "disk": self.psutil.disk_usage('/')._asdict(),
+        }
         
         # GPU
-        if gpu_info:
-            for gpu in gpu_info:
-                used = gpu['used_mb'] / 1024
-                total = gpu['total_mb'] / 1024
-                bar = '█' * int(used/total*20) + '░' * (20 - int(used/total*20))
-                print(f"🎮 GPU{gpu['id']} {gpu['name']}")
-                print(f"   显存: [{bar}] {used:.1f}GB / {total:.1f}GB ({used/total*100:.1f}%)")
-                print(f"   利用率: {gpu['utilization']}% | 温度: {gpu['temperature']}°C")
-        else:
-            print("🎮 GPU: 未检测到")
+        try:
+            import torch
+            if torch.cuda.is_available():
+                alloc = torch.cuda.memory_allocated() / 1024**3
+                total = torch.cuda.get_device_properties(0).total_memory / 1024**3
+                reserved = torch.cuda.memory_reserved() / 1024**3
+                
+                metrics["gpu"] = {
+                    "allocated_gb": round(alloc, 2),
+                    "reserved_gb": round(reserved, 2),
+                    "total_gb": round(total, 2),
+                    "percent": round(alloc / total * 100, 1)
+                }
+                
+                if self.initial_gpu is None:
+                    self.initial_gpu = alloc
+                metrics["gpu"]["growth_gb"] = round(alloc - self.initial_gpu, 2)
+        except ImportError:
+            pass
+        
+        return metrics
+    
+    def check_alerts(self, metrics: dict) -> list:
+        """检查告警"""
+        alerts = []
+        
+        # CPU
+        cpu = metrics.get("cpu_percent", 0)
+        if cpu > self.THRESHOLDS["cpu_percent"]:
+            alerts.append(f"🔴 CPU过高: {cpu}%")
         
         # 内存
-        mem_bar = '█' * int(mem_info['percent']/5) + '░' * (20 - int(mem_info['percent']/5))
-        print(f"💾 内存: [{mem_bar}] {mem_info['used_gb']:.1f}GB / {mem_info['total_gb']:.1f}GB ({mem_info['percent']}%)")
-        print(f"   可用: {mem_info['available_gb']:.1f}GB | Swap: {mem_info['swap_used_gb']:.1f}GB")
+        mem = metrics.get("memory", {})
+        mem_pct = mem.get("percent", 0)
+        if mem_pct > self.THRESHOLDS["memory_percent"]:
+            alerts.append(f"🔴 内存过高: {mem_pct}%")
         
         # 磁盘
-        disk_bar = '█' * int(disk_info['percent']/5) + '░' * (20 - int(disk_info['percent']/5))
-        print(f"💿 磁盘: [{disk_bar}] {disk_info['used_gb']:.1f}GB / {disk_info['total_gb']:.1f}GB ({disk_info['percent']}%)")
-        print(f"   可用: {disk_info['free_gb']:.1f}GB")
+        disk = metrics.get("disk", {})
+        disk_pct = disk.get("used", 0) / disk.get("total", 1) * 100
+        if disk_pct > self.THRESHOLDS["disk_percent"]:
+            alerts.append(f"🔴 磁盘过高: {disk_pct:.1f}%")
         
-        # 告警
-        alerts = self.check_alerts(gpu_info, mem_info, disk_info)
-        if alerts:
-            print(f"\n⚠️ 告警:")
-            for alert in alerts:
-                print(f"   {alert}")
-        else:
-            print(f"\n✅ 所有资源正常")
+        # GPU
+        gpu = metrics.get("gpu", {})
+        if gpu:
+            if gpu.get("percent", 0) > self.THRESHOLDS["gpu_percent"]:
+                alerts.append(f"🔴 GPU显存过高: {gpu['percent']}%")
+            if gpu.get("growth_gb", 0) > self.THRESHOLDS["gpu_growth_gb"]:
+                alerts.append(f"🔴 GPU显存泄漏: 增长{gpu['growth_gb']:.2f}GB")
         
-        # JSON日志
-        log = {
-            'timestamp': now,
-            'gpu': gpu_info,
-            'memory': mem_info,
-            'disk': disk_info,
-            'alerts': alerts
-        }
-        with open('logs/resource_monitor.jsonl', 'a') as f:
-            f.write(json.dumps(log) + '\n')
+        return alerts
+    
+    def run(self, duration: int = None):
+        """
+        运行监控
         
-        return len(alerts) == 0
+        Args:
+            duration: 运行时长（秒），None=无限
+        """
+        logger.info(f"{'='*60}")
+        logger.info("🔍 系统资源监控启动")
+        logger.info(f"  采样间隔: {self.interval}s")
+        logger.info(f"  告警阈值: CPU>{self.THRESHOLDS['cpu_percent']}% | "
+                   f"内存>{self.THRESHOLDS['memory_percent']}% | "
+                   f"磁盘>{self.THRESHOLDS['disk_percent']}% | "
+                   f"GPU>{self.THRESHOLDS['gpu_percent']}%")
+        logger.info(f"{'='*60}")
+        
+        start_time = time.time()
+        iteration = 0
+        
+        try:
+            while True:
+                metrics = self.get_metrics()
+                alerts = self.check_alerts(metrics)
+                
+                # 格式化输出
+                mem = metrics.get("memory", {})
+                mem_str = f"{mem.get('used',0)/1024**3:.1f}/{mem.get('total',0)/1024**3:.1f}GB ({mem.get('percent',0)}%)"
+                
+                disk = metrics.get("disk", {})
+                disk_str = f"{disk.get('used',0)/1024**3:.1f}/{disk.get('total',0)/1024**3:.1f}GB"
+                
+                gpu_str = "N/A"
+                gpu = metrics.get("gpu", {})
+                if gpu:
+                    gpu_str = f"{gpu['allocated_gb']:.1f}/{gpu['total_gb']:.1f}GB ({gpu['percent']}%)"
+                
+                # 每10次打印一次状态
+                if iteration % 10 == 0:
+                    logger.info(f"CPU:{metrics['cpu_percent']:5.1f}% | "
+                               f"MEM:{mem_str:>20} | "
+                               f"DISK:{disk_str:>18} | "
+                               f"GPU:{gpu_str}")
+                
+                # 告警
+                for alert in alerts:
+                    if alert not in self.alert_history:
+                        logger.warning(alert)
+                        self.alert_history.append(alert)
+                
+                # 保存指标
+                self._save_metrics(metrics)
+                
+                iteration += 1
+                
+                # 检查运行时长
+                if duration and (time.time() - start_time) > duration:
+                    logger.info("⏹️ 监控时长到达，退出")
+                    break
+                
+                time.sleep(self.interval)
+                
+        except KeyboardInterrupt:
+            logger.info("⏹️ 监控被中断")
+    
+    def _save_metrics(self, metrics: dict):
+        """保存指标到日志文件"""
+        metrics_file = LOG_DIR / "metrics.jsonl"
+        with open(metrics_file, 'a', encoding='utf-8') as f:
+            f.write(json.dumps(metrics, ensure_ascii=False) + "\n")
 
 
 def main():
-    parser = argparse.ArgumentParser(description='资源监控脚本')
-    parser.add_argument('--interval', type=int, default=5, help='监控间隔(秒)')
-    parser.add_argument('--once', action='store_true', help='只运行一次')
+    parser = argparse.ArgumentParser(description="系统资源监控")
+    parser.add_argument("--interval", type=int, default=5, help="采样间隔(秒)")
+    parser.add_argument("--duration", type=int, default=None, help="运行时长(秒)，默认无限")
     args = parser.parse_args()
     
-    import os
-    os.makedirs('logs', exist_ok=True)
-    
-    monitor = ResourceMonitor()
-    
-    if args.once:
-        monitor.print_status()
-    else:
-        print(f"开始监控，间隔 {args.interval} 秒 (Ctrl+C停止)")
-        try:
-            while True:
-                monitor.print_status()
-                time.sleep(args.interval)
-        except KeyboardInterrupt:
-            print("\n监控已停止")
+    monitor = SystemMonitor(interval=args.interval)
+    monitor.run(duration=args.duration)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()

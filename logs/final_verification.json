@@ -1,0 +1,16 @@
+{
+  "verification_time": "2026-06-20 20:35:17",
+  "file_check": "34/34",
+  "port_check": "2/3",
+  "stage_results": {
+    "1_环境搭建": true,
+    "2_知识库构建": true,
+    "3_RAG检索": true,
+    "4_Prompt体系": true,
+    "5_AI_Agent": true,
+    "6_管理后台": true,
+    "7_评测脚本": true,
+    "8_整合优化": false
+  },
+  "overall_status": "NEED_FIX"
+}

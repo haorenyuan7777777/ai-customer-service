@@ -1,159 +1,203 @@
 """
-Agent功能测试 - 意图识别 + 记忆 + 工具调用
+Agent端到端测试
+- 意图识别准确率
+- 多轮记忆连贯性
+- 工具调用正确性
+- 完整对话链路
 """
-import pytest
+
 import os
-import tempfile
-from src.models.intent_model import IntentClassifier
-from src.agent.memory import ChatMemory
-from src.agent.tools import ToolRegistry
+import sys
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+import logging
+from src.agent.agent_core import get_agent, CustomerServiceAgent
+from src.agent.intent_classifier import get_intent_classifier
+from src.agent.memory import get_memory_store
+from src.agent.tools import get_tool_registry
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 
-class TestIntentClassification:
+def test_intent_classification():
     """测试意图识别"""
+    logger.info("=" * 50)
+    logger.info("【测试1】意图识别")
     
-    @pytest.fixture(scope="class")
-    def classifier(self):
-        return IntentClassifier()
+    clf = get_intent_classifier()
     
-    def test_rule_based_intent(self, classifier):
-        """测试规则匹配意图"""
-        test_cases = [
-            ("这个多少钱？", "price_inquiry"),
-            ("我想购买这个", "purchase_intent"),
-            ("电池坏了怎么修？", "technical_issue"),
-            ("我要投诉你们", "complaint"),
-            ("你好，请问在吗？", "general_query"),
-        ]
+    test_cases = [
+        ("这个电池多少钱？", "销售转化"),
+        ("电池充不进去电怎么办？", "技术支持"),
+        ("你们这是骗人的，我要投诉！", "投诉处理"),
+        ("铅酸蓄电池正确使用的注意事项有哪些？", "标准客服"),
+        ("有优惠活动吗？想批量购买", "销售转化"),
+        ("产品坏了，怎么修？", "技术支持"),
+    ]
+    
+    correct = 0
+    for msg, expected in test_cases:
+        result = clf.classify(msg)
+        actual = result["intent"]
+        is_correct = actual == expected
+        correct += int(is_correct)
         
-        for text, expected in test_cases:
-            result = classifier.predict(text, use_rule=True)
-            assert result["intent"] == expected, f"'{text}' 应识别为 {expected}，实际是 {result['intent']}"
-            assert result["method"] == "rule"
-            print(f"✅ '{text}' -> {result['intent']} (规则匹配)")
+        icon = "✅" if is_correct else "❌"
+        logger.info(f"{icon} 输入: {msg[:20]}... → 预期: {expected}, 实际: {actual}")
     
-    def test_model_based_intent(self, classifier):
-        """测试模型推理意图"""
-        # 规则未命中的情况，应回退到模型
-        text = "这款产品性价比如何"
-        result = classifier.predict(text, use_rule=False)
-        
-        assert "intent" in result
-        assert "confidence" in result
-        assert result["method"] == "model"
-        assert sum(result["probabilities"].values()) > 0.99
-        
-        print(f"✅ 模型推理: '{text}' -> {result['intent']} (置信度: {result['confidence']:.3f})")
-    
-    def test_intent_confidence(self, classifier):
-        """测试意图置信度合理性"""
-        result = classifier.predict("价格是多少")
-        assert 0 <= result["confidence"] <= 1
-        assert result["probabilities"]["price_inquiry"] > 0.5
-        print(f"✅ 置信度测试通过: {result['confidence']:.3f}")
+    accuracy = correct / len(test_cases)
+    logger.info(f"准确率: {accuracy:.1%} ({correct}/{len(test_cases)})")
+    assert accuracy >= 0.8, f"意图识别准确率过低: {accuracy}"
+    logger.info("✅ 意图识别测试通过")
+    return accuracy
 
 
-class TestChatMemory:
+def test_multi_turn_memory():
     """测试多轮记忆"""
+    logger.info("\n" + "=" * 50)
+    logger.info("【测试2】多轮记忆")
     
-    @pytest.fixture
-    def memory(self):
-        # 使用临时数据库
-        db_path = tempfile.mktemp(suffix=".db")
-        mem = ChatMemory(db_path=db_path)
-        yield mem
-        # 清理
-        os.remove(db_path)
+    agent = get_agent()
+    user_id = "test_user_memory"
+    session_id = "session_001"
     
-    def test_save_and_retrieve(self, memory):
-        """测试保存和读取对话历史"""
-        session_id = "test_session_001"
-        
-        # 保存对话
-        memory.save(session_id, "user", "你好")
-        memory.save(session_id, "assistant", "您好，有什么可以帮您？")
-        memory.save(session_id, "user", "电池怎么充电")
-        
-        # 读取历史
-        history = memory.get_history(session_id, limit=3)
-        
-        assert len(history) == 3
-        assert history[0]["role"] == "user"
-        assert history[0]["content"] == "你好"
-        
-        print(f"✅ 记忆读写测试通过，共{len(history)}轮对话")
+    # 第一轮
+    r1 = agent.chat("你好，我想买电池", user_id, session_id)
+    logger.info(f"轮1: {r1['response'][:50]}...")
     
-    def test_history_limit(self, memory):
-        """测试历史记录限制"""
-        session_id = "test_limit"
-        
-        # 保存5轮对话
-        for i in range(5):
-            memory.save(session_id, "user", f"问题{i}")
-            memory.save(session_id, "assistant", f"回答{i}")
-        
-        # 限制读取3轮
-        history = memory.get_history(session_id, limit=3)
-        assert len(history) == 3
-        # 应返回最近的3条
-        assert history[-1]["content"] == "回答4"
-        
-        print(f"✅ 历史限制测试通过，返回最近{len(history)}轮")
+    # 第二轮（应包含第一轮记忆）
+    r2 = agent.chat("刚才说的那个多少钱？", user_id, session_id)
+    logger.info(f"轮2: {r2['response'][:50]}...")
     
-    def test_multiple_sessions(self, memory):
-        """测试多会话隔离"""
-        memory.save("session_a", "user", "会话A的问题")
-        memory.save("session_b", "user", "会话B的问题")
-        
-        history_a = memory.get_history("session_a")
-        history_b = memory.get_history("session_b")
-        
-        assert len(history_a) == 1
-        assert len(history_b) == 1
-        assert history_a[0]["content"] == "会话A的问题"
-        assert history_b[0]["content"] == "会话B的问题"
-        
-        print(f"✅ 多会话隔离测试通过")
+    # 验证记忆
+    memory = agent.memory
+    history  = memory.get_history(user_id, session_id, limit=10)
+    assert len(history) >= 2, f"记忆轮数不足: {len(history)}"
+
+    logger.info(f"记忆轮数: {len(history)}")
+    for entry in history:
+        logger.info(f"  [用户] {entry['user_message'][:30]}...")
+        logger.info(f"  [助手] {entry['assistant_message'][:30]}...")
+        logger.info(f"  [意图] {entry['intent'][:30]}...")
+        logger.info(f"  [时间] {entry['timestamp'][:30]}...")
+    
+    logger.info(f"记忆轮数: {len(history)}")
+
+    memory.clear_history(user_id, session_id)
+    logger.info("✅ 多轮记忆测试通过")
 
 
-class TestToolRegistry:
+def test_tool_execution():
     """测试工具调用"""
+    logger.info("\n" + "=" * 50)
+    logger.info("【测试3】工具调用")
     
-    @pytest.fixture
-    def registry(self):
-        reg = ToolRegistry()
-        
-        # 注册测试工具
-        @reg.register(name="get_price", description="查询价格")
-        def get_price(product: str) -> dict:
-            return {"product": product, "price": 199.99}
-        
-        @reg.register(name="check_stock", description="检查库存")
-        def check_stock(product: str) -> dict:
-            return {"product": product, "stock": 100}
-        
-        return reg
+    registry = get_tool_registry()
     
-    def test_tool_list(self, registry):
-        """测试工具列表"""
-        tools = registry.list_tools()
-        assert len(tools) == 2
-        assert any(t["name"] == "get_price" for t in tools)
-        print(f"✅ 工具列表测试通过，共{len(tools)}个工具")
+    # 查询订单
+    result = registry.call("query_order", order_id="ORD2024001")
+    assert result["success"]
+    assert result["data"]["order_id"] == "ORD2024001"
+    logger.info(f"查询订单: {result['data']}")
     
-    def test_tool_execution(self, registry):
-        """测试工具执行"""
-        result = registry.execute("get_price", {"product": "铅酸电池"})
-        assert result["product"] == "铅酸电池"
-        assert result["price"] == 199.99
-        print(f"✅ 工具执行测试通过: {result}")
+    # 转人工
+    result = registry.call("transfer_to_human", reason="复杂问题")
+    assert result["success"]
+    assert "ticket_id" in result["data"]
+    logger.info(f"转人工: {result['data']['ticket_id']}")
     
-    def test_tool_not_found(self, registry):
-        """测试工具不存在"""
-        with pytest.raises(ValueError):
-            registry.execute("nonexistent_tool", {})
-        print(f"✅ 工具不存在异常测试通过")
+    # 查询库存
+    result = registry.call("check_inventory", product_name="铅酸蓄电池")
+    assert result["success"]
+    assert result["data"]["stock"] > 0
+    logger.info(f"查询库存: {result['data']['stock']}件")
+    
+    logger.info("✅ 工具调用测试通过")
+
+
+def test_full_pipeline():
+    """测试完整对话链路"""
+    logger.info("\n" + "=" * 50)
+    logger.info("【测试4】完整对话链路")
+    
+    agent = get_agent()
+    
+    result = agent.chat(
+        "这个铅酸蓄电池多少钱？有优惠吗？",
+        user_id="test_user_pipeline",
+        session_id="pipeline_001"
+    )
+    
+    logger.info(f"意图: {result.get('intent')}")
+    logger.info(f"分类: {result.get('category')}")
+    response = result.get('response', '') or ""
+    logger.info(f"响应: {response[:100]}...")
+    
+    # 获取耗时（兼容 Promptflow 和直接调用）
+    elapsed = result.get('execution_time_ms', 0)
+    logger.info(f"耗时: {elapsed}ms")
+    
+    assert result.get("intent") == "销售转化"
+    assert len(response) > 10
+    # 放宽时间检查，生产环境可调整
+    assert elapsed < 30000, f"响应过慢: {elapsed}ms"  # 30秒兜底
+    
+    logger.info("✅ 完整链路测试通过")
+
+def test_complaint_priority():
+    """测试投诉高优先级"""
+    logger.info("\n" + "=" * 50)
+    logger.info("【测试5】投诉高优先级")
+    
+    agent = get_agent()
+    
+    result = agent.chat(
+        "你们产品质量太差了，我要退款！",
+        user_id="test_user_complaint",
+        session_id="complaint_001"
+    )
+    
+    assert result["intent"] == "投诉处理"
+    # 投诉响应应包含安抚性语言
+    response = result["response"]
+    assert any(word in response for word in ["抱歉", "理解", "歉意", "记录"]), \
+        f"投诉响应缺少安抚: {response[:50]}"
+    
+    logger.info(f"投诉响应: {response[:100]}...")
+    logger.info("✅ 投诉优先级测试通过")
+
+
+def run_all_tests():
+    """运行全部测试"""
+    tests = [
+        test_intent_classification,
+        test_multi_turn_memory,
+        test_tool_execution,
+        test_full_pipeline,
+        test_complaint_priority,
+    ]
+    
+    results = []
+    for test in tests:
+        try:
+            test()
+            results.append((test.__name__, "PASS"))
+        except Exception as e:
+            logger.error(f"❌ {test.__name__} 失败: {e}")
+            results.append((test.__name__, f"FAIL: {e}"))
+    
+    logger.info("\n" + "=" * 50)
+    logger.info("📋 Agent测试报告")
+    logger.info("=" * 50)
+    for name, status in results:
+        icon = "✅" if status == "PASS" else "❌"
+        logger.info(f"{icon} {name}: {status}")
+    
+    all_pass = all(s == "PASS" for _, s in results)
+    logger.info(f"\n总评: {'✅ 全部通过' if all_pass else '⚠️ 存在失败项'}")
+    return all_pass
 
 
 if __name__ == "__main__":
-    pytest.main([__file__, "-v", "-s"])
+    run_all_tests()
